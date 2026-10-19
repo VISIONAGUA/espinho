@@ -618,7 +618,7 @@
               <button class="btn btn-success" id="btn-ligar">💧 Ligar bomba</button>
               <button class="btn btn-danger" id="btn-desligar">⏹ Desligar</button>
             </div>
-            <p class="note">Ligar a bomba pede a sua senha, porque libera água sem pagamento.</p>
+            <p class="note">Ligar a bomba libera água sem pagamento.</p>
           </div>
           <div class="card">
             <h2>Confirmação do comando</h2>
@@ -1103,21 +1103,6 @@
   </form>
 </dialog>
 
-<dialog id="dlg-senha">
-  <form id="form-senha">
-    <div class="dlg-body">
-      <h3 id="ds-t">Confirmar</h3>
-      <p id="ds-p"></p>
-      <div class="field"><label for="ds-senha">Senha do painel</label><input id="ds-senha" class="input" type="password" autocomplete="current-password"></div>
-      <p class="form-erro" id="ds-erro" hidden></p>
-    </div>
-    <div class="dlg-actions">
-      <button type="button" class="btn btn-ghost" id="ds-cancel">Cancelar</button>
-      <button type="submit" class="btn btn-primary" id="ds-ok">Confirmar</button>
-    </div>
-  </form>
-</dialog>
-
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -1203,35 +1188,6 @@ function confirmar(titulo, texto, okTxt = 'Confirmar', perigo = false) {
     d.returnValue = '';
     d.addEventListener('close', () => res(d.returnValue === 'ok'), { once: true });
     d.showModal();
-  });
-}
-
-// Pede a senha do painel e confere no Firebase (mesma senha do login)
-function pedirSenha(titulo, texto, okTxt = 'Confirmar') {
-  return new Promise(res => {
-    const d = $('#dlg-senha'), f = $('#form-senha'), inp = $('#ds-senha'), er = $('#ds-erro'), ok = $('#ds-ok');
-    $('#ds-t').textContent = titulo; $('#ds-p').textContent = texto; ok.textContent = okTxt;
-    inp.value = ''; er.hidden = true;
-    let feito = false;
-    const fechar = v => { if (feito) return; feito = true; f.onsubmit = null; $('#ds-cancel').onclick = null; d.onclose = null; if (d.open) d.close(); res(v); };
-    f.onsubmit = async e => {
-      e.preventDefault();
-      if (!inp.value) { er.textContent = 'Digite a senha.'; er.hidden = false; return; }
-      ok.disabled = true; ok.textContent = 'Verificando…';
-      try {
-        const u = auth.currentUser;
-        await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email, inp.value));
-        fechar(true);
-      } catch (err) {
-        er.textContent = /too-many/.test(err.code || '') ? 'Muitas tentativas. Aguarde alguns minutos.' :
-                         /network/.test(err.code || '') ? 'Sem conexão com a internet.' : 'Senha incorreta.';
-        er.hidden = false; inp.select();
-      } finally { ok.disabled = false; ok.textContent = okTxt; }
-    };
-    $('#ds-cancel').onclick = () => fechar(false);
-    d.onclose = () => fechar(false);
-    d.showModal();
-    setTimeout(() => inp.focus(), 60);
   });
 }
 
@@ -1614,9 +1570,10 @@ function renderBomba() {
 
 async function enviarComando(ligar) {
   const e = estadoEsp();
+  // Ação agora usa apenas a confirmação padrão em vez de pedir senha.
   if (ligar) {
-    const ok = await pedirSenha('Ligar a bomba agora?',
-      `A água vai sair por ${tempoBomba()} segundos sem pagamento. Digite sua senha para confirmar.`, 'Ligar bomba');
+    const ok = await confirmar('Ligar a bomba agora?',
+      `A água vai sair por ${tempoBomba()} segundos sem pagamento. Deseja continuar?`, 'Ligar bomba', true);
     if (!ok) return;
   }
   if (!e.on && !await confirmar('A máquina está offline', 'O comando fica guardado e será executado assim que ela reconectar. Enviar mesmo assim?', 'Enviar')) return;
@@ -1800,18 +1757,15 @@ async function acaoTx(acao, id) {
   const email = auth.currentUser?.email || '', agora = agoraSec();
   try {
     if (acao === 'autorizar') {
-      if (!await pedirSenha('Autorizar estorno',
-        `Devolver ${brl(t.valor)} do PIX #${id} para o cliente? Digite sua senha para confirmar.`, 'Autorizar estorno')) return;
+      if (!await confirmar('Autorizar estorno', `Devolver ${brl(t.valor)} do PIX #${id} para o cliente?`, 'Autorizar estorno', true)) return;
       await enfileirarEstorno(t, 'autorizado_usuario', { autorizado_por: email, autorizado_em: agora });
       toast('Estorno autorizado. A máquina vai processar em instantes.', 'success');
     } else if (acao === 'recusar') {
-      if (!await pedirSenha('Recusar estorno',
-        `O valor de ${brl(t.valor)} fica na conta e este PIX não será devolvido. Digite sua senha para confirmar.`, 'Recusar estorno')) return;
+      if (!await confirmar('Recusar estorno', `O valor de ${brl(t.valor)} fica na conta e este PIX não será devolvido.`, 'Recusar estorno', true)) return;
       await db.ref('/transacoes/' + id).update({ status: 'estorno_recusado', recusado_por: email, recusado_em: agora, id: String(id) });
       toast('Estorno recusado.', 'success');
     } else if (acao === 'repetir') {
-      if (!await pedirSenha('Tentar o estorno de novo',
-        `Nova tentativa de devolver ${brl(t.valor)} do PIX #${id}. Digite sua senha para confirmar.`, 'Tentar de novo')) return;
+      if (!await confirmar('Tentar o estorno de novo', `Nova tentativa de devolver ${brl(t.valor)} do PIX #${id}.`, 'Tentar de novo', true)) return;
       await enfileirarEstorno(t, t.motivo_estorno || 'autorizado_usuario', { reenviado_por: email, reenviado_em: agora });
       toast('Nova tentativa enviada para a máquina.', 'success');
     }
@@ -2781,8 +2735,8 @@ $('#form-seguranca').addEventListener('submit', async e => {
 });
 
 $('#btn-freio').addEventListener('click', async () => {
-  if (!await pedirSenha('Reativar o estorno automático',
-    'Os contadores de hoje voltam para zero e a máquina volta a devolver sozinha, dentro das regras. Digite sua senha para confirmar.', 'Reativar')) return;
+  if (!await confirmar('Reativar o estorno automático',
+    'Os contadores de hoje voltam para zero e a máquina volta a devolver sozinha, dentro das regras. Deseja continuar?', 'Reativar')) return;
   try {
     await db.ref('/comandos').update({ reativar_freio: true, reativar_freio_por: auth.currentUser?.email || '' });
     toast('Freio liberado. A máquina volta ao automático em instantes.', 'success');
